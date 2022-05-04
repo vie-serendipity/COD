@@ -1,5 +1,7 @@
 import torch
 import torch.nn.functional as F
+import pdb
+
 
 def Optimizer(args, model):
     if args.optimizer == 'Adam':
@@ -51,7 +53,8 @@ def adaptive_pixel_intensity_loss(pred, mask):
 
 def weighted_cross_entropy(inputs, targets, weight=1.1):
     # bdcn loss with the rcf approach
-    targets = targets.long()
+
+    # targets = targets.long()
     # mask = (targets > 0.1).float()
     mask = targets.float()
     num_positive = torch.sum((mask > 0.0).float()).float() # >0.1
@@ -60,8 +63,11 @@ def weighted_cross_entropy(inputs, targets, weight=1.1):
     mask[mask > 0.] = 1.0 * num_negative / (num_positive + num_negative) #0.1
     mask[mask <= 0.] = 1.1 * num_positive / (num_positive + num_negative)  # before mask[mask <= 0.1]
     # mask[mask == 2] = 0
+    # pdb.set_trace()
     inputs= torch.sigmoid(inputs)
     cost = torch.nn.BCELoss(mask, reduction='none')(inputs, targets.float())
     # cost = torch.mean(cost.float().mean((1, 2, 3))) # before sum
     cost = torch.sum(cost.float().mean((1, 2, 3))) # before sum
-    return weight*cost
+    return 100*weight*cost
+
+    

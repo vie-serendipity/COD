@@ -2,6 +2,7 @@ import os
 import cv2
 import time
 import pdb
+from matplotlib import image
 import numpy as np
 import torch
 import torch.nn as nn
@@ -73,7 +74,7 @@ class Trainer():
 
             else:
                 early_stopping += 1
-
+                
             if early_stopping == args.patience + 10:
                 break
 
@@ -97,24 +98,25 @@ class Trainer():
         self.model.train()
         train_loss = AvgMeter()
         train_mae = AvgMeter()
+        train_edge = AvgMeter()
 
         for images, masks, edges in tqdm(self.train_loader):
             images = torch.tensor(images, device=self.device, dtype=torch.float32)
             masks = torch.tensor(masks, device=self.device, dtype=torch.float32)
             edges = torch.tensor(edges, device=self.device, dtype=torch.float32)
-
             self.optimizer.zero_grad()
             outputs, edges_mask, ds_map = self.model(images)
             loss1 = self.criterion(outputs, masks)
             loss2 = self.criterion(ds_map[0], masks)
             loss3 = self.criterion(ds_map[1], masks)
             loss4 = self.criterion(ds_map[2], masks)
+            loss5 = self.criterion(ds_map[3], masks)
 
-            # loss_mask = self.criterion_edge(edges_mask, edges)
-            loss_mask = sum(self.criterion_edge(edge_mask, edges, weight) for edge_mask, weight in zip(edges_mask, self.l_weight))
-            loss = loss1 + loss2 + loss3 + loss4 + loss_mask
-
+            loss_mask = self.criterion_edge(edges_mask, edges)
+            # loss_mask = sum(self.criterion_edge(edge_mask, edges, weight) for edge_mask, weight in zip(edges_mask, self.l_weight))
+            loss = loss1 + loss2 + loss3 + loss4 + loss5 + loss_mask
             loss.backward()
+            # loss.backward()
             nn.utils.clip_grad_norm_(self.model.parameters(), args.clipping)
             self.optimizer.step()
 
@@ -124,9 +126,10 @@ class Trainer():
             # log
             train_loss.update(loss.item(), n=images.size(0))
             train_mae.update(mae.item(), n=images.size(0))
+            train_edge.update(loss_mask.item(), n=images.size(0))
 
         print(f'Epoch:[{self.epoch:03d}/{args.epochs:03d}]')
-        print(f'Train Loss:{train_loss.avg:.3f} | MAE:{train_mae.avg:.3f}')
+        print(f'Train Loss:{train_loss.avg:.4f} | MAE:{train_mae.avg:.4f} | Train Loss_mask:{train_edge.avg:.4f}')
 
         return train_loss.avg, train_mae.avg
 
@@ -134,6 +137,7 @@ class Trainer():
         self.model.eval()
         val_loss = AvgMeter()
         val_mae = AvgMeter()
+        val_edge = AvgMeter()
 
         with torch.no_grad():
             for images, masks, edges in tqdm(self.val_loader):
@@ -146,10 +150,11 @@ class Trainer():
                 loss2 = self.criterion(ds_map[0], masks)
                 loss3 = self.criterion(ds_map[1], masks)
                 loss4 = self.criterion(ds_map[2], masks)
+                loss5 = self.criterion(ds_map[3], masks)
+                loss_mask = self.criterion_edge(edges_mask, edges)
 
-                # loss_mask = self.criterion_edge(edges_mask, edges)
-                loss_mask = sum(self.criterion_edge(edge_mask, edges, weight) for edge_mask, weight in zip(edges_mask, self.l_weight))
-                loss = loss1 + loss2 + loss3 + loss4 + loss_mask
+                # loss_mask = sum(self.criterion_edge(edge_mask, edges, weight) for edge_mask, weight in zip(edges_mask, self.l_weight))
+                loss = loss1 + loss2 + loss3 + loss4 + loss5 + loss_mask
 
                 # Metric
                 mae = torch.mean(torch.abs(outputs - masks))
@@ -157,8 +162,10 @@ class Trainer():
                 # log
                 val_loss.update(loss.item(), n=images.size(0))
                 val_mae.update(mae.item(), n=images.size(0))
+                val_edge.update(loss_mask.item(), n=images.size(0))
+                
 
-        print(f'Valid Loss:{val_loss.avg:.3f} | MAE:{val_mae.avg:.3f}')
+        print(f'Valid Loss:{val_loss.avg:.4f} | MAE:{val_mae.avg:.4f} | Valid Loss_mask:{val_edge.avg:.4f}')
         return val_loss.avg, val_mae.avg
 
     def test(self, args, save_path):
@@ -233,9 +240,8 @@ class Tester():
         print('###### pre-trained Model restored #####')
 
         self.criterion = Criterion(args)
-
-        te_img_folder = os.path.join(args.data_path, args.dataset, 'Test/Image')
-        te_gt_folder = os.path.join(args.data_path, args.dataset, 'Test/GT_Object')
+        te_img_folder = os.path.join(args.data_path, 'TestDataset', args.dataset, 'Imgs')
+        te_gt_folder = os.path.join(args.data_path, 'TestDataset', args.dataset, 'GT')
         self.test_loader = get_loader(te_img_folder, te_gt_folder, edge_folder=None, train_size=args.img_size, phase='test',
                                       batch_size=args.batch_size, shuffle=False,
                                       num_workers=args.num_workers, augmentation=True)
@@ -263,35 +269,36 @@ class Tester():
                 H, W = original_size
 
                 for i in range(images.size(0)):
-                    # if image_name[i] != 'COD10K-CAM-1-Aquatic-9-GhostPipefish-346':
-                    #     continue
+                    
                     mask = gt_to_tensor(masks[i])
                     h, w = H[i].item(), W[i].item()
-
+                    if image_name[i] == 'animal-62':
+                        w = 998
+                    if image_name[i] == 'animal-74':
+                        h = 678
                     output = F.interpolate(outputs[i].unsqueeze(0), size=(h, w), mode='bilinear')
                     loss = self.criterion(output, mask)
 
                     # Metric
                     mae, max_f, avg_f, s_score = Eval_tool.cal_total_metrics(output, mask)
-                    
                     # Save prediction map
                     if self.args.save_map is not None:
                         output = (output.squeeze().detach().cpu().numpy()*255.0).astype(np.uint8)   # convert uint8 type
                         # ds_map_0 = (ds_map[0][i].squeeze().detach().cpu().numpy()*255.0).astype(np.uint8)   # convert uint8 type
                         # ds_map_1 = (ds_map[1][i].squeeze().detach().cpu().numpy()*255.0).astype(np.uint8)   # convert uint8 type
                         # ds_map_2 = (ds_map[2][i].squeeze().detach().cpu().numpy()*255.0).astype(np.uint8)   # convert uint8 type
-                        # edge_mask = (edge_mask[i].squeeze().detach().cpu().numpy()*255.0).astype(np.uint8)   # convert uint8 type
+                        # edge_mask = (edges_mask[i].squeeze().detach().cpu().numpy()*255.0).astype(np.uint8)   # convert uint8 type
 
                         cv2.imwrite(os.path.join('/Data/ZZY/P_Edge_N', 'snapshot', \
                             'exp'+str(self.args.exp_num), self.args.dataset, image_name[i]+'.png'), output)
                         # cv2.imwrite(os.path.join('/Data/ZZY/P_Edge_N', 'snapshot', \
-                        #     'exp'+str(self.args.exp_num), 'dissertation_image', image_name[i]+'map_0.png'), ds_map_0)
+                        #     'exp'+str(self.args.exp_num), 'dissertation_image', image_name[i]+'_map_0.png'), ds_map_0)
                         # cv2.imwrite(os.path.join('/Data/ZZY/P_Edge_N', 'snapshot', \
-                        #     'exp'+str(self.args.exp_num), 'dissertation_image', image_name[i]+'map_1.png'), ds_map_1)
+                        #     'exp'+str(self.args.exp_num), 'dissertation_image', image_name[i]+'_map_1.png'), ds_map_1)
                         # cv2.imwrite(os.path.join('/Data/ZZY/P_Edge_N', 'snapshot', \
-                        #     'exp'+str(self.args.exp_num), 'dissertation_image', image_name[i]+'map_2.png'), ds_map_2)
+                        #     'exp'+str(self.args.exp_num), 'dissertation_image', image_name[i]+'_map_2.png'), ds_map_2)
                         # cv2.imwrite(os.path.join('/Data/ZZY/P_Edge_N', 'snapshot', \
-                        #     'exp'+str(self.args.exp_num), 'dissertation_image', image_name[i]+'edge.png'), edge_mask)
+                        #     'exp'+str(self.args.exp_num), 'dissertation_image', image_name[i]+'_edge.png'), edge_mask)
                             
                     # log
                     test_loss.update(loss.item(), n=1)
@@ -307,6 +314,6 @@ class Tester():
             test_s_m = test_s_m.avg
         print('--------------test---------------')
         print(f'Test Loss:{test_loss:.4f} | MAX_F:{test_maxf:.4f} | MAE:{test_mae:.4f} '
-              f'| S_Measure:{test_s_m:.4f}, time: {time.time() - t:.3f}s')
+              f'| S_Measure:{test_s_m:.4f}, time: {time.time() - t:.3f}s')        
 
         return test_loss, test_mae, test_maxf, test_avgf, test_s_m

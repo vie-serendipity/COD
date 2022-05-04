@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import pdb
 from model.Res2net import res2net50_v1b_26w_4s
 from modules.block_modules import RFB_Block, aggregation, aggregation_edge, ObjectAttention
 from modules.edge_modules import DexiNed
@@ -26,8 +27,9 @@ class PEN(nn.Module):
         self.agg_e = aggregation_edge(channels)
         # Object Attention
         # self.FEM = Frequency_Edge_Module(radius=opt.frequency_radius, channel=self.channels[0])
-        self.ObjectAttention2 = ObjectAttention(channel=self.channels[2], kernel_size=3)
+        self.ObjectAttention2 = ObjectAttention(channel=self.channels[0], kernel_size=3)
         self.ObjectAttention1 = ObjectAttention(channel=self.channels[1], kernel_size=3)
+        self.ObjectAttention0 = ObjectAttention(channel=self.channels[2], kernel_size=3)
 
     def forward(self, inputs):
         B, C, H, W = inputs.size()
@@ -43,15 +45,21 @@ class PEN(nn.Module):
         x5 = self.resnet.layer4(x4)      # bs, 2048, 11, 11
 
         #edge
-        # x0_rfb = self.rfb0(x0)  # 32 
-        # x1_rfb = self.rfb1(x1)  # 64
-        # x2_rfb = self.rfb2(x2)  # 128
+        temp_0 = x0.clone().detach()
+        temp_1 = x1.clone().detach()
+        temp_2 = x2.clone().detach()
+        x0_rfb = self.rfb0(temp_0)  # 32 
+        x1_rfb = self.rfb1(temp_1)  # 64
+        x2_rfb = self.rfb2(temp_2)  # 128
 
-        # edge = self.agg_e(x2_rfb, x1_rfb, x0_rfb)
-        # edge = F.interpolate(edge, scale_factor=4, mode='bilinear')
-        edges = self.edge_model(inputs)
-        edges = [torch.sigmoid(x) for x in edges]
-        edge = edges[-1]
+        edge = self.agg_e(x2_rfb, x1_rfb, x0_rfb)
+
+
+
+        # edges = self.edge_model(inputs)
+        # # pdb.set_trace()
+        # edges = [torch.sigmoid(x) for x in edges]
+        # edge = edges[-1]
 
 
         #consealed map
@@ -62,16 +70,29 @@ class PEN(nn.Module):
         D_0 = self.agg(x5_rfb, x4_rfb, x3_rfb)                           # D_0 (44,44)
         ds_map0 = F.interpolate(D_0, scale_factor=8, mode='bilinear')
 
-        D_1 = self.ObjectAttention2(D_0, x3, edge)                             # D_1 (44,44)
+
+        t_map0 = D_0                                                 # t_map0 (44,44)
+        D_1 = self.ObjectAttention0(t_map0, x2, edge)               # D_1 (44,44)
         ds_map1 = F.interpolate(D_1, scale_factor=8, mode='bilinear')    
+
+        t_map1 = F.interpolate(D_1, scale_factor=2, mode='bilinear')
+        D_2=self.ObjectAttention1(t_map1, x1, edge)
+        ds_map2 = F.interpolate(D_2, scale_factor=4, mode='bilinear')    
+        
+        t_map2 = D_2
+        D_3=self.ObjectAttention2(t_map2, x0, edge)
+        ds_map3 = F.interpolate(D_3, scale_factor=4, mode='bilinear')   
+
+        # D_1 = self.ObjectAttention2(D_0, x3, edge)                             # D_1 (44,44)
+        # ds_map1 = F.interpolate(D_1, scale_factor=8, mode='bilinear')    
                                                                          
-        ds_map = F.interpolate(D_1, scale_factor=2, mode='bilinear')     # ds_map (88,88)
+        # ds_map = F.interpolate(D_1, scale_factor=2, mode='bilinear')     # ds_map (88,88)
 
-        D_2 = self.ObjectAttention1(ds_map, x1, edge)
-        ds_map2 = F.interpolate(D_2, scale_factor=4, mode='bilinear')     
+        # D_2 = self.ObjectAttention1(ds_map, x1, edge)
+        # ds_map2 = F.interpolate(D_2, scale_factor=4, mode='bilinear')     
+        final_map = (ds_map3 + ds_map2 + ds_map1 + ds_map0) / 4
+        
+        edge = F.interpolate(edge, scale_factor=4, mode='bilinear')
 
-        final_map = (ds_map2 + ds_map1 + ds_map0) / 3
-
-
-        return torch.sigmoid(final_map), edges, \
-               (torch.sigmoid(ds_map0), torch.sigmoid(ds_map1), torch.sigmoid(ds_map2))
+        return torch.sigmoid(final_map), torch.sigmoid(edge), \
+               (torch.sigmoid(ds_map0), torch.sigmoid(ds_map1), torch.sigmoid(ds_map2), torch.sigmoid(ds_map3))

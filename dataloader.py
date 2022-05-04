@@ -9,7 +9,7 @@ from torch.utils.data import Dataset, DataLoader
 from sklearn.model_selection import train_test_split
 from torchvision import transforms
 from PIL import ImageEnhance
-
+import pdb
 
 def cv_random_flip(img, edge, mask):
     flip_flag = random.randint(0, 1)
@@ -103,7 +103,6 @@ class DatasetGenerate(Dataset):
             transforms.Normalize([0.485, 0.456, 0.406],
                            [0.229, 0.224, 0.225]),
         ])
-        print(len(self.images))
         train_images, val_images, train_gts, val_gts, train_edges, val_edges = train_test_split(self.images, self.gts,
                                                                                                 self.edges,
                                                                                                 test_size=0.05,
@@ -137,7 +136,6 @@ class DatasetGenerate(Dataset):
 
             image = colorEnhance(image)
             mask = randomPeper(mask)
-
         image = self.train_transform(image)
         mask = self.onechannel_transform(mask)
         edge = self.onechannel_transform(edge)
@@ -165,7 +163,6 @@ class Test_DatasetGenerate(Dataset):
         original_size = image.shape[:2]
 
         image = self.test_transform(Image.fromarray(image))
-
         return image, self.gts[idx], original_size, image_name
 
     def __len__(self):

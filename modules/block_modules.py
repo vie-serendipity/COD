@@ -214,6 +214,7 @@ class UnionAttentionModule(nn.Module):
         self.sigmoid = nn.Sigmoid()
 
     def masking(self, x, mask):
+        # pdb.set_trace()
         mask = mask.squeeze(3).squeeze(2)
         threshold = torch.quantile(mask, self.confidence_ratio, dim=-1, keepdim=True)
         mask[mask <= threshold] = 0.0
@@ -224,6 +225,7 @@ class UnionAttentionModule(nn.Module):
         return masked_x
 
     def Channel_Tracer(self, x):
+        # pdb.set_trace()
         avg_pool = self.GAP(x)
         x_norm = self.norm(avg_pool)
 
@@ -249,7 +251,7 @@ class UnionAttentionModule(nn.Module):
         X_c, alpha_mask = self.Channel_Tracer(x)
         X_c = self.bn(X_c)
         x_drop = self.masking(X_c, alpha_mask)
-
+        # pdb.set_trace()
         q = self.spatial_q(x_drop).squeeze(1) # squeeze channel
         k = self.spatial_k(x_drop).squeeze(1)
         v = self.spatial_v(x_drop).squeeze(1)
@@ -331,6 +333,45 @@ class aggregation(nn.Module):
 
         return output
 
+class GRA(nn.Module):
+    def __init__(self, channel, subchannel):
+        super(GRA, self).__init__()
+        self.group = channel//subchannel
+        self.conv = nn.Sequential(
+            nn.Conv2d(channel + self.group, channel, 3, padding=1), nn.ReLU(True),
+        )
+        self.score = nn.Conv2d(channel, 1, 3, padding=1)
+
+    def forward(self, x, y):
+        # pdb.set_trace()
+        if self.group == 1:
+            x_cat = torch.cat((x, y), 1)
+        elif self.group == 2:
+            xs = torch.chunk(x, 2, dim=1)
+            x_cat = torch.cat((xs[0], y, xs[1], y), 1)
+        elif self.group == 4:
+            xs = torch.chunk(x, 4, dim=1)
+            x_cat = torch.cat((xs[0], y, xs[1], y, xs[2], y, xs[3], y), 1)
+        elif self.group == 8:
+            xs = torch.chunk(x, 8, dim=1)
+            x_cat = torch.cat((xs[0], y, xs[1], y, xs[2], y, xs[3], y, xs[4], y, xs[5], y, xs[6], y, xs[7], y), 1)
+        elif self.group == 16:
+            xs = torch.chunk(x, 16, dim=1)
+            x_cat = torch.cat((xs[0], y, xs[1], y, xs[2], y, xs[3], y, xs[4], y, xs[5], y, xs[6], y, xs[7], y,
+            xs[8], y, xs[9], y, xs[10], y, xs[11], y, xs[12], y, xs[13], y, xs[14], y, xs[15], y), 1)
+        elif self.group == 32:
+            xs = torch.chunk(x, 32, dim=1)
+            x_cat = torch.cat((xs[0], y, xs[1], y, xs[2], y, xs[3], y, xs[4], y, xs[5], y, xs[6], y, xs[7], y,
+            xs[8], y, xs[9], y, xs[10], y, xs[11], y, xs[12], y, xs[13], y, xs[14], y, xs[15], y,
+            xs[16], y, xs[17], y, xs[18], y, xs[19], y, xs[20], y, xs[21], y, xs[22], y, xs[23], y,
+            xs[24], y, xs[25], y, xs[26], y, xs[27], y, xs[28], y, xs[29], y, xs[30], y, xs[31], y), 1)
+        else:
+            raise Exception("Invalid Channel")
+
+        x = x + self.conv(x_cat)
+        y = y + self.score(x)
+
+        return x, y
 
 class ObjectAttention(nn.Module):
     def __init__(self, channel, kernel_size):
@@ -355,6 +396,8 @@ class ObjectAttention(nn.Module):
         )
         self.conv1 = BasicConv2d(channel // 2, 1, 1)
 
+        self.gra = GRA(channel, 16)
+
     def forward(self, decoder_map, encoder_map, edge_map):
         """
         Args:
@@ -363,16 +406,23 @@ class ObjectAttention(nn.Module):
         Returns:
             decoder representation: (B, 1, H, W)
         """
-        # mask_bg = -1 * torch.sigmoid(decoder_map) + 1  # Sigmoid & Reverse
-        mask_ob = torch.sigmoid(decoder_map)  # object attention
-        x = mask_ob.expand(-1, self.channel, -1, -1).mul(encoder_map)
+        mask_bg = -1 * torch.sigmoid(decoder_map) + 1  # Sigmoid & Reverse
+        # mask_ob = torch.sigmoid(decoder_map)  # object attention
+        # pdb.set_trace()
+        x1, y1 = self.gra(encoder_map, mask_bg)
         if edge_map.shape[2]!=decoder_map.shape[2]:
             edge_map = F.interpolate(edge_map, size=(decoder_map.shape[2], decoder_map.shape[3]))
-        x = x + (edge_map * encoder_map)
+        x2, y2 = self.gra(x1, edge_map)
+        # x = mask_bg.expand(-1, self.channel, -1, -1).mul(encoder_map)
+        # edge = mask_bg.clone()
+        # edge[edge > opt.denoise] = 0
+        # x = x + (edge * encoder_map)
 
-        x = self.DWSConv(x)
-        skip = x.clone()
-        x = torch.cat([self.DWConv1(x), self.DWConv2(x), self.DWConv3(x), self.DWConv4(x)], dim=1) + skip
-        x = torch.relu(self.conv1(x))
+        # x = x + (edge_map * encoder_map)
 
-        return x + decoder_map
+        # x = self.DWSConv(x)
+        # skip = x.clone()
+        # x = torch.cat([self.DWConv1(x), self.DWConv2(x), self.DWConv3(x), self.DWConv4(x)], dim=1) + skip
+        # x = torch.relu(self.conv1(x))
+
+        return y2 + decoder_map

@@ -4,7 +4,7 @@ def getOption():
     parser = argparse.ArgumentParser()
     parser.add_argument('action', type=str, default='train', help='Model Training or Testing options')
     parser.add_argument('--exp_num', default=0, type=str, help='experiment_number')
-    parser.add_argument('--dataset', type=str, default='COD10K-v3', help='')
+    parser.add_argument('--dataset', type=str, default='TrainDataset', help='')
     parser.add_argument('--data_path', type=str, default='/Data/ZZY')
 
     # Model parameter settings
@@ -17,7 +17,7 @@ def getOption():
 
     # Training parameter settings
     parser.add_argument('--img_size', type=int, default=352)
-    parser.add_argument('--batch_size', type=int, default=24)
+    parser.add_argument('--batch_size', type=int, default=16)
     parser.add_argument('--epochs', type=int, default=100)
     parser.add_argument('--lr', type=float, default=5e-5)
     parser.add_argument('--optimizer', type=str, default='Adam')
@@ -27,7 +27,7 @@ def getOption():
     parser.add_argument('--aug_ver', type=int, default=2, help='1=Normal, 2=Hard')
     parser.add_argument('--lr_factor', type=float, default=0.1)
     parser.add_argument('--clipping', type=float, default=2, help='Gradient clipping')
-    parser.add_argument('--patience', type=int, default=5, help="Scheduler ReduceLROnPlateau's parameter & Early Stopping(+5)")
+    parser.add_argument('--patience', type=int, default=4, help="Scheduler ReduceLROnPlateau's parameter & Early Stopping(+5)")
     parser.add_argument('--model_path', type=str, default='/Data/ZZY/P_Edge_N/results')
     parser.add_argument('--seed', type=int, default=42)
     parser.add_argument('--save_map', type=bool, default=None, help='Save prediction map')

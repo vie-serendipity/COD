@@ -11,6 +11,7 @@ warnings.filterwarnings('ignore')
 opt = getOption()
 
 torch.cuda.set_device(1)
+torch.autograd.set_detect_anomaly(True)
 
 def main(opt):
     print('<---- Training Params ---->')
@@ -37,11 +38,12 @@ def main(opt):
     else:
         save_path = os.path.join(opt.model_path, opt.dataset, f'EG_{str(opt.exp_num)}')
 
-        datasets = ['COD10K-v3']
+        # datasets = ['CHAMELEON']
+        datasets = ['COD10K','CAMO','CHAMELEON']
         for dataset in datasets:
             opt.dataset = dataset
             test_loss, test_mae, test_maxf, test_avgf, test_s_m = Tester(opt, save_path).test()
-
+            # Tester(opt, save_path).test()
             print(f'Test Loss:{test_loss:.3f} | MAX_F:{test_maxf:.4f} '
                   f'| AVG_F:{test_avgf:.4f} | MAE:{test_mae:.4f} | S_Measure:{test_s_m:.4f}')
 
